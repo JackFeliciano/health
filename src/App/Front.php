@@ -1,0 +1,61 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Health\App;
+
+use Health\Home\Sample;
+
+/**
+ * The front controller. It builds the sample, routes the path and renders. The
+ * health route carries the numbers a probe needs to tell a working process from
+ * a live one that has lost its data.
+ */
+final class Front
+{
+    public function __construct(private readonly string $base)
+    {
+    }
+
+    public function run(): void
+    {
+        $router = new Router($this->base);
+        $views = new Views($this->base);
+        $sample = new Sample();
+        $today = getenv('HEALTH_TODAY') ?: '12 November 2026';
+
+        $router->get('/', static fn (): array => [200, [
+            'html' => $views->front($sample, $today),
+        ]]);
+
+        // The probe sits under /status, not /health: the site's own base is /health/,
+        // so a route named health would come back to the front page instead of JSON.
+        $router->get('/status', static fn (): array => [200, ['json' => [
+            'ok' => true,
+            'sessions' => count($sample->plan()->sessions()),
+            'pending' => count($sample->plan()->pending()),
+            'score' => $sample->plan()->score(),
+        ]]]);
+
+        [$status, $body] = $router->handle(
+            $_SERVER['REQUEST_METHOD'] ?? 'GET',
+            $_SERVER['REQUEST_URI'] ?? '/',
+        );
+
+        http_response_code($status);
+        if (isset($body['json'])) {
+            header('Content-Type: application/json');
+            echo json_encode($body['json'], JSON_UNESCAPED_SLASHES), "\n";
+
+            return;
+        }
+        if (isset($body['html'])) {
+            header('Content-Type: text/html; charset=utf-8');
+            echo $body['html'];
+
+            return;
+        }
+        header('Content-Type: text/html; charset=utf-8');
+        echo $views->notFound((string) ($body['path'] ?? '/'));
+    }
+}
